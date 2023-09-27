@@ -19,7 +19,7 @@ layout: default
 <h1>ICS file for Cambridge Film Festival</h1>
 
 <p>
-  <big><strong><a href="ics/all.ics?{{ site.github.build_revision }}">All screenings</a></strong> (.ics)</big>
+  <big><strong><a href="ics/cff.ics?{{ site.github.build_revision }}">All screenings</a></strong> (.ics)</big>
 </p>
 
 <h2>Instructions</h2>

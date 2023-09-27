@@ -51,10 +51,10 @@ class CffICS:
 
         path = "{}.html".format(os.path.join(save_cache_path("cff"), h.hexdigest()))
 
-        try:
+        if os.path.exists(path):
             with open(path, "rb") as f:
                 content = f.read()
-        except FileNotFoundError:
+        else:
             r = self.session.get(url)
             r.raise_for_status()
             content = r.content
@@ -69,10 +69,14 @@ class CffICS:
         soup = self.get_soup("https://www.cambridgefilmfestival.org.uk/whats-on")
 
         for elem in soup.select("article.film-item a"):
-            result.add(elem["href"])
+            url = elem["href"]
+
+            if not url.startswith("http"):
+                url = f"https://www.cambridgefilmfestival.org.uk/{url}"
+
+            result.add(url)
 
         logging.info(f"Found {len(result)} total films")
-        print(repr(result))
 
         return list(sorted(result))
 
@@ -97,16 +101,29 @@ class CffICS:
         synopsis = synopsis.replace("\xa0", " ")
         synopsis = synopsis.replace("Synopsis\n", "")
 
+        if runtime is None:
+            runtime = 100
+            logging.warning(f"No runtime for {title}; defaulting to {runtime} minutes")
+
         film = {
             "title": title,
             "year": year,
             "synopsis": synopsis,
             "runtime": runtime,
             "screenings": [],
+            "url": url,
         }
 
+        #logging.debug(f"Found {title} at {url}")
+
         for x in soup.select("ul.film-screening-list a"):
-            film["screenings"].append(self.parse_screening(x["href"]))
+            screening_url = x["href"]
+
+            if not screening_url:
+                logging.warning(f"Empty screening URL for {title} at {url}")
+                continue
+
+            film["screenings"].append(self.parse_screening(screening_url))
 
         assert film["runtime"]
         assert film["screenings"]
@@ -120,7 +137,7 @@ class CffICS:
         val = val.replace("Showing on ", "")
         start = parse(val).replace(tzinfo=self.LOCAL_TIMEZONE)
 
-        uid = parse_qs(urlparse(url))["txtSessionId"][0]
+        uid = parse_qs(urlparse(url).query)["txtSessionId"][0]
         screen = soup.select_one(".cinema-screen-name").get_text()[-1]
 
         return {
@@ -153,7 +170,7 @@ class CffICS:
                 # Overview
                 event.add("uid", screening["uid"])
                 event.add("summary", film["title"])
-                event.add("location", "Arts Picturehouse")
+                event.add("location", "Arts Picturehouse, 38-39 St Andrew's St, Cambridge CB2 3AR")
 
                 # Calculate times
                 runtime = film["runtime"]
