@@ -2,25 +2,23 @@
 #
 # https://icalendar.readthedocs.io/en/latest/usage.html#example
 
-import os
 import datetime
-import json
+import hashlib
 import logging
+import os
 import re
+
+from urllib.parse import urlparse, parse_qs
 
 import click
 import icalendar
-import hashlib
 import pytz
 import requests
-import slugify
-import yaml
 
 from bs4 import BeautifulSoup
 from rich.logging import RichHandler
 from rich.progress import track
 from dateutil.parser import parse
-from urllib.parse import urlparse, parse_qs
 from xdg.BaseDirectory import save_cache_path
 
 logging.basicConfig(
@@ -40,7 +38,7 @@ class CffICS:
         for url in track(self.get_film_urls()):
             self.parse_film(url)
 
-        with open(f"ics/cff.ics", "w") as f:
+        with open("ics/cff.ics", "w") as f:
             f.write(self.get_ics())
 
     def get_soup(self, url):
@@ -151,7 +149,7 @@ class CffICS:
         }
 
     def get_ics(self):
-        name = f"Cambridge Film Festival"
+        name = "Cambridge Film Festival"
 
         cal = icalendar.Calendar()
         cal.add("prodid", "-//icalendar//mxm.dk//")
@@ -159,12 +157,6 @@ class CffICS:
         cal.add("name", name)
         cal.add("x-wr-calname", name)
         cal.add("last-modified", datetime.datetime.utcnow())
-
-        def get_datetime(raw):
-            # '/Date(1683856800000)/'
-            timestamp = int(raw[6:-5])
-
-            return datetime.datetime.fromtimestamp(timestamp, tz=datetime.timezone.utc)
 
         for film in self.films:
             for idx, screening in enumerate(film["screenings"]):
@@ -197,7 +189,7 @@ class CffICS:
 
 
                 if len(film["screenings"]) > 1:
-                    val = f"Also playing at:"
+                    val = "Also playing at:"
                     for idx_, screening_ in enumerate(film["screenings"]):
                         if idx == idx_:
                             continue
