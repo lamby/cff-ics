@@ -27,8 +27,6 @@ logging.basicConfig(
     level=logging.DEBUG, format="%(message)s", datefmt="[%X]", handlers=[RichHandler()]
 )
 
-re_collapse_newlines = re.compile(r"\n+")
-
 
 class CffICS:
     PADDING = 20  # minutes
@@ -98,8 +96,13 @@ class CffICS:
         title = soup.select_one("h1.film-title").get_text(strip=True)
         synopsis = soup.select_one(".film-details__synopsis").get_text().strip()
 
-        synopsis = synopsis.replace("\xa0", " ")
-        synopsis = synopsis.replace("Synopsis\n", "")
+        for pat, repl in (
+            (r"\xa0", " "),
+            ("Synopsis\n", ""),
+            ("Original Title: .*\n", ""),
+            (r"\n+", ""),
+        ):
+            synopsis = re.sub(pat, repl, synopsis)
 
         if runtime is None:
             runtime = 100
@@ -114,7 +117,7 @@ class CffICS:
             "url": url,
         }
 
-        #logging.debug(f"Found {title} at {url}")
+        # logging.debug(f"Found {title} at {url}")
 
         for x in soup.select("ul.film-screening-list a"):
             screening_url = x["href"]
@@ -148,7 +151,7 @@ class CffICS:
         }
 
     def get_ics(self):
-        name = f"CFF"
+        name = f"Cambridge Film Festival"
 
         cal = icalendar.Calendar()
         cal.add("prodid", "-//icalendar//mxm.dk//")
@@ -164,13 +167,16 @@ class CffICS:
             return datetime.datetime.fromtimestamp(timestamp, tz=datetime.timezone.utc)
 
         for film in self.films:
-            for screening in film["screenings"]:
+            for idx, screening in enumerate(film["screenings"]):
                 event = icalendar.Event()
 
                 # Overview
                 event.add("uid", screening["uid"])
                 event.add("summary", film["title"])
-                event.add("location", "Arts Picturehouse, 38-39 St Andrew's St, Cambridge CB2 3AR")
+                event.add(
+                    "location",
+                    "Arts Picturehouse, 38-39 St Andrew's St, Cambridge CB2 3AR",
+                )
 
                 # Calculate times
                 runtime = film["runtime"]
@@ -184,8 +190,23 @@ class CffICS:
                 # Description
                 description = []
                 hours, minutes = divmod(runtime, 60)
-                description.append(f"Duration: {runtime} mins ({hours}h{minutes:02d}m)")
+                description.append(
+                    f"Duration: {runtime} mins ({hours}h{minutes:02d}m)\nScreen: {screening['screen']}"
+                )
                 description.append(film["synopsis"])
+
+
+                if len(film["screenings"]) > 1:
+                    val = f"Also playing at:"
+                    for idx_, screening_ in enumerate(film["screenings"]):
+                        if idx == idx_:
+                            continue
+                        val += "\n• {} (screen {})".format(
+                            screening_["start"].strftime("%a %d %B, %I:%M %p"),
+                            screening_["screen"],
+                        )
+                    description.append(val)
+
                 description.append(film["url"])
                 description.append(screening["url"])
                 event.add("description", "\n\n".join(description))
