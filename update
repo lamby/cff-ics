@@ -2,6 +2,7 @@
 #
 # https://icalendar.readthedocs.io/en/latest/usage.html#example
 
+import os
 import datetime
 import json
 import logging
@@ -9,6 +10,7 @@ import re
 
 import click
 import icalendar
+import hashlib
 import pytz
 import requests
 import slugify
@@ -17,118 +19,119 @@ import yaml
 from bs4 import BeautifulSoup
 from rich.logging import RichHandler
 from rich.progress import track
+from dateutil.parser import parse
+from urllib.parse import urlparse, parse_qs
+from xdg.BaseDirectory import save_cache_path
 
 logging.basicConfig(
-    level=logging.INFO, format="%(message)s", datefmt="[%X]", handlers=[RichHandler()]
+    level=logging.DEBUG, format="%(message)s", datefmt="[%X]", handlers=[RichHandler()]
 )
 
 re_collapse_newlines = re.compile(r"\n+")
 
 
-class SiffICS:
-    PADDING = 10  # minutes
-    START = datetime.date.today() - datetime.timedelta(days=2)
-    DAYS = 10
-    LOCAL_TIMEZONE = pytz.timezone("America/Los_Angeles")
-    BASE_URL = "https://www.siff.net/calendar?view=list&date="
+class CffICS:
+    PADDING = 20  # minutes
+    LOCAL_TIMEZONE = pytz.timezone("Europe/London")
 
     def __init__(self):
         self.session = requests.Session()
+        self.films = []
 
     def main(self):
-        # Parse events
-        self.events = []
-        for x in track(range(self.DAYS + 1)):
-            date = self.START + datetime.timedelta(days=x)
-            self.populate_events_for_date(date)
-        logging.info(f"Found {len(self.events)} total events")
+        for url in track(self.get_film_urls()):
+            self.parse_film(url)
 
-        self.post_process_events()
+        with open(f"ics/cff.ics", "w") as f:
+            f.write(self.get_ics())
 
-        # Parse venues
-        self.venues = {}
-        for event in self.events:
-            if event["VenueSlug"] in self.venues:
-                continue
-            self.venues[event["VenueSlug"]] = {
-                x: y for x, y in event.items() if x.startswith("Venue")
-            }
+    def get_soup(self, url):
+        h = hashlib.sha1()
+        h.update(url.encode("utf-8"))
 
-        logging.info(f"Found {len(self.venues)} total venues")
+        path = "{}.html".format(os.path.join(save_cache_path("cff"), h.hexdigest()))
 
-        # Write calendars
-        for slug, venue in self.venues.items():
-            events = [x for x in self.events if x["VenueSlug"] == venue["VenueSlug"]]
-
-            ics = self.get_ics(events, venue["VenueName"])
-
-            with open(f"ics/{slug}.ics", "w") as f:
-                f.write(ics)
-
-        # Write an "all events" calendar, too
-        with open(f"ics/all.ics", "w") as f:
-            f.write(self.get_ics(self.events, "all venues"))
-
-        # Write venues
-        venues = sorted(self.venues.values(), key=lambda x: x["VenueName"])
-        with open(f"_data/venues.yaml", "w") as f:
-            f.write(yaml.dump(list(venues)))
-
-    def post_process_events(self):
-        logging.info(f"Calculating further film metadata")
-
-        by_title = {}  # str -> [dict]
-        for x in self.events:
-            by_title.setdefault(x["EventName"], []).append(x)
-
-        # Add film counts
-        for xs in track(by_title.values()):
-            logging.info(f"Downloading data for {xs[0]['EventName']} …")
-
-            r = self.session.get(xs[0]["Url"])
+        try:
+            with open(path, "rb") as f:
+                content = f.read()
+        except FileNotFoundError:
+            r = self.session.get(url)
             r.raise_for_status()
+            content = r.content
+            with open(path, "wb") as f:
+                f.write(content)
 
-            soup = BeautifulSoup(r.content, "html.parser")
+        return BeautifulSoup(content, "html.parser")
 
-            # Body text
-            body = soup.select("div.body-copy")[0].get_text()
-            body = body.strip()
-            body = re_collapse_newlines.sub(" ", body).strip()
+    def get_film_urls(self):
+        result = set()
 
-            for idx, x in enumerate(xs):
-                x["EventBody"] = body
+        soup = self.get_soup("https://www.cambridgefilmfestival.org.uk/whats-on")
 
-    def populate_events_for_date(self, date):
-        date_fmt = date.strftime("%Y-%m-%d")
-        logging.info(f"Getting events for {date_fmt} …")
+        for elem in soup.select("article.film-item a"):
+            result.add(elem["href"])
 
-        r = self.session.get(
-            "{}{}".format(self.BASE_URL, date_fmt),
-        )
-        r.raise_for_status()
+        logging.info(f"Found {len(result)} total films")
+        print(repr(result))
 
-        soup = BeautifulSoup(r.content, "html.parser")
+        return list(sorted(result))
 
-        for elem in soup.select("a.elevent"):
-            data = json.loads(elem["data-screening"])
-            if data["VenueName"] == "Virtual":
-                continue
-            name = data["VenueName"].partition("| ")[2].strip()
-            data.update(
-                {
-                    "VenueName": name,
-                    "VenueSlug": slugify.slugify(name),
-                    "Url": "https://www.siff.net{}".format(
-                        elem.parent.parent.parent.select("a")[0]["href"]
-                    ),
-                }
-            )
-            self.events.append(data)
+    def parse_film(self, url):
+        soup = self.get_soup(url)
 
-    def get_ics(self, events, venue_name):
-        logging.info(f"Updating for {venue_name}")
+        year = None
+        runtime = None
+        for elem in soup.select("ul.screening-details li"):
+            val = elem.get_text()
+            if val.startswith("Run time: "):
+                runtime = int(val.split(" ")[2])
+            if val.startswith("Release year: "):
+                try:
+                    year = int(val.split(" ")[2])
+                except ValueError:
+                    pass
 
-        name = f"SIFF Cinema ({venue_name})"
+        title = soup.select_one("h1.film-title").get_text(strip=True)
+        synopsis = soup.select_one(".film-details__synopsis").get_text().strip()
+
+        synopsis = synopsis.replace("\xa0", " ")
+        synopsis = synopsis.replace("Synopsis\n", "")
+
+        film = {
+            "title": title,
+            "year": year,
+            "synopsis": synopsis,
+            "runtime": runtime,
+            "screenings": [],
+        }
+
+        for x in soup.select("ul.film-screening-list a"):
+            film["screenings"].append(self.parse_screening(x["href"]))
+
+        assert film["runtime"]
+        assert film["screenings"]
+
+        self.films.append(film)
+
+    def parse_screening(self, url):
+        soup = self.get_soup(url)
+
+        val = soup.select_one("div.session-overview-line.session-time").get_text()
+        val = val.replace("Showing on ", "")
+        start = parse(val).replace(tzinfo=self.LOCAL_TIMEZONE)
+
+        uid = parse_qs(urlparse(url))["txtSessionId"][0]
+        screen = soup.select_one(".cinema-screen-name").get_text()[-1]
+
+        return {
+            "start": start,
+            "screen": screen,
+            "url": url,
+            "uid": uid,
+        }
+
+    def get_ics(self):
+        name = f"CFF"
 
         cal = icalendar.Calendar()
         cal.add("prodid", "-//icalendar//mxm.dk//")
@@ -143,36 +146,34 @@ class SiffICS:
 
             return datetime.datetime.fromtimestamp(timestamp, tz=datetime.timezone.utc)
 
-        for x in events:
-            event = icalendar.Event()
+        for film in self.films:
+            for screening in film["screenings"]:
+                event = icalendar.Event()
 
-            # Overview
-            event.add("uid", x["ShowtimeId"])
-            event.add("summary", x["EventName"])
-            event.add(
-                "location",
-                f"{x['VenueName']}, {x['VenueAddress1']}",
-            )
+                # Overview
+                event.add("uid", screening["uid"])
+                event.add("summary", film["title"])
+                event.add("location", "Arts Picturehouse")
 
-            # Calculate times
-            start = get_datetime(x["Showtime"])
-            runtime = int(x["LengthInMinutes"])
-            end = start + datetime.timedelta(
-                minutes=self.PADDING + self.round_to_nearest(runtime, 5)
-            )
-            event.add("dtstamp", start)
-            event.add("dtstart", start)
-            event.add("dtend", end)
+                # Calculate times
+                runtime = film["runtime"]
+                end = screening["start"] + datetime.timedelta(
+                    minutes=self.PADDING + self.round_to_nearest(runtime, 5)
+                )
+                event.add("dtstamp", screening["start"])
+                event.add("dtstart", screening["start"])
+                event.add("dtend", end)
 
-            # Description
-            description = []
-            hours, minutes = divmod(runtime, 60)
-            description.append(f"Duration: {runtime} mins ({hours}h{minutes:02d}m)")
-            description.append(x["EventBody"])
-            description.append(x["Url"])
-            event.add("description", "\n\n".join(description))
+                # Description
+                description = []
+                hours, minutes = divmod(runtime, 60)
+                description.append(f"Duration: {runtime} mins ({hours}h{minutes:02d}m)")
+                description.append(film["synopsis"])
+                description.append(film["url"])
+                description.append(screening["url"])
+                event.add("description", "\n\n".join(description))
 
-            cal.add_component(event)
+                cal.add_component(event)
 
         return cal.to_ical().decode("utf-8")
 
@@ -182,7 +183,7 @@ class SiffICS:
 
 @click.command()
 def main():
-    SiffICS().main()
+    CffICS().main()
 
 
 if __name__ == "__main__":
