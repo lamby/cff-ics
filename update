@@ -27,7 +27,7 @@ logging.basicConfig(
 
 
 class CffICS:
-    PADDING = 20  # minutes
+    PADDING = 15  # minutes
     LOCAL_TIMEZONE = pytz.timezone("Europe/London")
 
     def __init__(self):
@@ -192,13 +192,13 @@ class CffICS:
                 description = []
                 hours, minutes = divmod(runtime, 60)
                 description.append(f"Duration: {runtime} mins ({hours}h{minutes:02d}m)")
-                description.append("Screen: {screening['screen']}")
+                description.append(f"Screen: {screening['screen']}")
                 if film["year"]:
-                    description.append("Release year: {film['year']}")
+                    description.append(f"Release year: {film['year']}")
                 description.append(film["synopsis"])
 
                 if len(film["screenings"]) > 1:
-                    val = "Also playing at:"
+                    val = "Also playing on:"
                     for idx_, screening_ in enumerate(film["screenings"]):
                         if idx == idx_:
                             continue
