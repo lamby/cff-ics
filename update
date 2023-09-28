@@ -101,6 +101,7 @@ class CffICS:
             ("Synopsis\n", ""),
             ("Original Title: .*\n", ""),
             (r"\n+", ""),
+            (r"\s*Part of .*", ""),
         ):
             synopsis = re.sub(pat, repl, synopsis)
 
@@ -191,10 +192,7 @@ class CffICS:
                 # Description
                 description = []
                 hours, minutes = divmod(runtime, 60)
-                description.append(f"Duration: {runtime} mins ({hours}h{minutes:02d}m)")
-                description.append(f"Screen: {screening['screen']}")
-                if film["year"]:
-                    description.append(f"Release year: {film['year']}")
+                description.append(f"Duration: {runtime} mins ({hours}h{minutes:02d}m)\nScreen: {screening['screen']}")
                 description.append(film["synopsis"])
 
                 if len(film["screenings"]) > 1:
@@ -203,7 +201,7 @@ class CffICS:
                         if idx == idx_:
                             continue
                         val += "\n• {} (Screen {})".format(
-                            screening_["start"].strftime("%a %d %B, %I:%M %p"),
+                            screening_["start"].strftime("%A %d %B, %-I:%M %p"),
                             screening_["screen"],
                         )
                     description.append(val)
