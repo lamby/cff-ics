@@ -50,6 +50,8 @@ class CffICS:
         if os.path.exists(path):
             with open(path, "rb") as f:
                 content = f.read()
+
+            logging.debug(f"Using saved contents from {path} over downloading {url}")
         else:
             r = self.session.get(url)
             r.raise_for_status()
@@ -120,8 +122,15 @@ class CffICS:
         for x in soup.select("ul.film-screening-list a"):
             screening_url = x["href"]
 
+            if title == "Typist Artist Pirate King" and x.get_text(
+                strip=True
+            ).startswith("Thu, 19/10/2023 - 20:20"):
+                screening_url = "https://ticketing.picturehouses.com/Ticketing/visSelectTickets.aspx?cinemacode=002&txtSessionId=48478&visLang=1"
+
             if not screening_url:
-                logging.warning(f"Empty screening URL for {title} at {url}")
+                logging.warning(
+                    f"Empty screening URL for {title} at {url}"
+                )
                 continue
 
             film["screenings"].append(self.parse_screening(screening_url))
@@ -182,18 +191,16 @@ class CffICS:
                 # Description
                 description = []
                 hours, minutes = divmod(runtime, 60)
-                description.append(
-                    f"Duration: {runtime} mins ({hours}h{minutes:02d}m)\nScreen: {screening['screen']}"
-                )
+                description.append(f"Duration: {runtime} mins ({hours}h{minutes:02d}m)")
+                description.append("Screen: {screening['screen']}")
                 description.append(film["synopsis"])
-
 
                 if len(film["screenings"]) > 1:
                     val = "Also playing at:"
                     for idx_, screening_ in enumerate(film["screenings"]):
                         if idx == idx_:
                             continue
-                        val += "\n• {} (screen {})".format(
+                        val += "\n• {} (Screen {})".format(
                             screening_["start"].strftime("%a %d %B, %I:%M %p"),
                             screening_["screen"],
                         )
